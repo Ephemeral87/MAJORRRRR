@@ -2,7 +2,7 @@ import streamlit as st
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-MODEL_NAME = "your-username/indicbert-youtube-sentiment"
+MODEL_NAME = "cardiffnlp/twitter-xlm-roberta-base-sentiment"
 
 
 @st.cache_resource
@@ -14,7 +14,12 @@ def load_model():
 
 def predict_sentiment(texts, batch_size=16):
     tokenizer, model = load_model()
-    label_map = {0: "Positive", 1: "Neutral", 2: "Negative", 3: "Other"}
+
+    label_map = {
+        0: "Negative",
+        1: "Neutral",
+        2: "Positive"
+    }
 
     all_preds = []
     all_scores = []
@@ -37,7 +42,7 @@ def predict_sentiment(texts, batch_size=16):
             probs = torch.softmax(outputs.logits, dim=-1)
             preds = torch.argmax(probs, dim=-1)
 
-        all_preds.extend([label_map[p.item()] for p in preds])
+        all_preds.extend([label_map.get(p.item(), "Other") for p in preds])
         all_scores.extend([round(torch.max(prob).item(), 4) for prob in probs])
 
     return all_preds, all_scores

@@ -1,0 +1,15 @@
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+matplotlib
+seaborn
+transformers
+torch
+datasets
+evaluate
+google-api-python-client
+langdetect
+sentencepiece
+huggingface_hub

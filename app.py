@@ -7,14 +7,16 @@ from utils.youtube_api import get_video_comments
 from utils.inference import predict_sentiment
 from utils.charts import sentiment_pie, sentiment_by_language
 
-# Ensure language detection is consistent
+# Set seed for consistent language detection
 DetectorFactory.seed = 0
 
 st.set_page_config(
-    page_title="YouTube Multilingual Sentiment Dashboard",
+    page_title="Multilingual Sentiment Dashboard",
     page_icon="📊",
     layout="wide"
 )
+
+# --- HELPER FUNCTIONS ---
 
 def extract_video_id(url):
     parsed = urlparse(url)
@@ -25,148 +27,171 @@ def extract_video_id(url):
     return None
 
 def detect_language_safe(text):
-    # Quick check for Tamil script characters
-    if any('\u0b80' <= char <= '\u0bff' for char in text):
-        return "Tamil"
+    """
+    Detects language using Unicode script ranges for Indian languages
+    and langdetect for Romanized (English-script) languages.
+    """
+    # Native Script Detection
+    if any('\u0b80' <= char <= '\u0bff' for char in text): return "Tamil"
+    if any('\u0900' <= char <= '\u097f' for char in text): return "Hindi"
+    if any('\u0c00' <= char <= '\u0c7f' for char in text): return "Telugu"
+    if any('\u0c80' <= char <= '\u0cff' for char in text): return "Kannada"
+    
     try:
         lang = detect(text)
-        # Map common codes to full names
-        lang_map = {'en': 'English', 'ta': 'Tamil', 'hi': 'Hindi', 'te': 'Telugu'}
+        lang_map = {
+            'en': 'English', 'ta': 'Tamil (English Script)', 
+            'hi': 'Hindi (English Script)', 'te': 'Telugu', 'kn': 'Kannada'
+        }
         return lang_map.get(lang, lang.upper())
     except:
         return "Unknown"
 
 def refine_sentiment_accuracy(row):
     """
-    Custom logic to fix errors where AI marks Tanglish requests as 'Negative'.
+    Manual override logic for higher accuracy in South Asian contexts.
+    Moves 'Requests' from Negative to Neutral.
     """
     text = str(row['comment']).lower()
     
-    # Keywords that usually indicate a request/question (Neutral), not a complaint (Negative)
-    neutral_keywords = ['podunga', 'pannunga', 'sollunga', 'venum', 'review please', 'suggest', 'comparison', 'waiting', 'how to', 'next video']
+    # 1. Neutral Request Keywords (AI often misinterprets these as Negative)
+    neutral_keywords = [
+        # Tamil
+        'podunga', 'pannunga', 'sollunga', 'venum', 'kodunga',
+        # Hindi
+        'dikhao', 'batiye', 'chahiye', 'karo', 'banao', 'do',
+        # Telugu
+        'cheyyandi', 'chupinchandi', 'eppudu', 'cheppandi',
+        # Kannada
+        'madi', 'maadi', 'torisi', 'heli', 'beku',
+        # English
+        'please', 'suggest', 'review', 'comparison', 'waiting'
+    ]
     
-    # Keywords/Emojis that are definitely positive
-    positive_indicators = ['super', 'nice', 'mass', 'fire', '🔥', '👍', '❤️', 'love', 'thala', 'excellent', 'rocking']
+    # 2. Positive Slang & Emojis
+    positive_indicators = [
+        'super', 'nice', 'mass', 'fire', '🔥', '👍', '❤️', 'love', 'excellent',
+        'achha', 'badhiya', 'mast', 'bagundi', 'baagundi', 'chennagide'
+    ]
 
     current_sentiment = row['sentiment']
 
-    # Fix 1: If marked Negative but contains request keywords -> Neutral
+    # Logic: If AI says Negative but user is just asking for a video -> Neutral
     if current_sentiment == "Negative" and any(word in text for word in neutral_keywords):
         return "Neutral"
     
-    # Fix 2: If marked Negative/Neutral but has positive indicators -> Positive
+    # Logic: If AI is unsure but there are positive emojis/words -> Positive
     if current_sentiment in ["Negative", "Neutral"] and any(word in text for word in positive_indicators):
         return "Positive"
 
-    # Fix 3: Hard-coded Negative (Common Tamil/English slang for bad)
-    if any(word in text for word in ['waste', 'worst', 'mokkai', 'bad', 'disappointing']):
+    # Logic: Hard-coded Negatives
+    if any(word in text for word in ['waste', 'worst', 'mokkai', 'bekar', 'chetha', 'kharaab', 'bad']):
         return "Negative"
 
     return current_sentiment
 
+# --- UI LAYOUT ---
+
 st.title("📊 YouTube Multilingual Sentiment Dashboard")
-st.caption("Advanced research dashboard with Tanglish and Emoji support.")
+st.caption("Research Tool for English, Tamil, Hindi, Telugu, and Kannada Sentiment Analysis.")
 
 with st.sidebar:
-    st.header("Input Settings")
-    api_key = st.text_input("YouTube API Key", type="password")
-    youtube_url = st.text_input("YouTube Video URL")
+    st.header("Setup")
+    api_key = st.text_input("YouTube API Key", type="password", help="Get this from Google Cloud Console")
+    youtube_url = st.text_input("YouTube Video URL", placeholder="https://www.youtube.com/watch?v=...")
     limit = st.slider("Comments to analyze", 20, 500, 100)
     st.divider()
-    st.info("This dashboard uses XLM-RoBERTa Multilingual AI for high accuracy in mixed languages.")
+    st.info("Supported: Native scripts (தமிழ், हिंदी, తెలుగు, ಕನ್ನಡ) and Romanized (Tanglish, Hinglish, etc.)")
 
-run = st.button("Analyze Comments", use_container_width=True, type="primary")
+run = st.button("Run Multilingual Analysis", use_container_width=True, type="primary")
 
 if run:
     if not api_key or not youtube_url:
-        st.warning("Please enter both API key and YouTube URL.")
+        st.warning("Please provide both an API Key and a Video URL.")
         st.stop()
 
     video_id = extract_video_id(youtube_url)
-
     if not video_id:
-        st.error("Invalid YouTube URL.")
+        st.error("Invalid YouTube URL format.")
         st.stop()
 
-    with st.spinner("Step 1: Fetching comments from YouTube..."):
+    # 1. Fetch Comments
+    with st.spinner("Fetching comments from YouTube..."):
         comments = get_video_comments(api_key, video_id, limit=limit)
 
     if isinstance(comments, dict) and "error" in comments:
-        st.error(comments["error"])
+        st.error(f"API Error: {comments['error']}")
         st.stop()
 
     if not comments:
-        st.warning("No comments found for this video.")
+        st.warning("No comments found.")
         st.stop()
 
-    # Create Dataframe
+    # 2. Process Data
     df = pd.DataFrame(comments)
     
-    with st.spinner("Step 2: Detecting languages and running Multilingual AI..."):
+    with st.spinner("Running AI Sentiment Analysis..."):
         # Detect Language
         df["language"] = df["comment"].astype(str).apply(detect_language_safe)
         
-        # Run AI Sentiment
+        # Predict Sentiment (using XLM-RoBERTa Multilingual)
         sentiments, scores = predict_sentiment(df["comment"].astype(str).tolist())
         df["sentiment"] = sentiments
         df["confidence"] = scores
         
-        # Apply the Refinement Fix for Accuracy
+        # Apply Custom Refinement for high accuracy
         df["sentiment"] = df.apply(refine_sentiment_accuracy, axis=1)
 
-    # --- METRICS SECTION ---
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total", len(df))
-    
-    pos_pct = (df['sentiment'].eq('Positive').mean() * 100)
-    neu_pct = (df['sentiment'].eq('Neutral').mean() * 100)
-    neg_pct = (df['sentiment'].eq('Negative').mean() * 100)
-    
-    c2.metric("Positive", f"{pos_pct:.1f}%")
-    c3.metric("Neutral", f"{neu_pct:.1f}%")
-    c4.metric("Negative", f"{neg_pct:.1f}%")
-    c5.metric("Avg Confidence", f"{df['confidence'].mean():.2f}")
+    # 3. Display Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Comments", len(df))
+    m2.metric("Positive", f"{(df['sentiment'].eq('Positive').mean()*100):.1f}%")
+    m3.metric("Neutral", f"{(df['sentiment'].eq('Neutral').mean()*100):.1f}%")
+    m4.metric("Negative", f"{(df['sentiment'].eq('Negative').mean()*100):.1f}%")
 
-    tab1, tab2, tab3 = st.tabs(["📊 Overview Charts", "🔍 Comment Analysis", "💾 Raw Data"])
+    # 4. Tabs for Visuals and Data
+    tab1, tab2, tab3 = st.tabs(["📈 Visualization", "🔍 Detailed Analysis", "💾 Export Data"])
 
     with tab1:
-        col1, col2 = st.columns(2)
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             st.plotly_chart(sentiment_pie(df), use_container_width=True)
-        with col2:
+        with c2:
             st.plotly_chart(sentiment_by_language(df), use_container_width=True)
 
     with tab2:
-        selected_sentiment = st.selectbox(
-            "Filter table by sentiment",
-            ["All", "Positive", "Neutral", "Negative"]
-        )
-
-        temp_df = df.copy()
-        if selected_sentiment != "All":
-            temp_df = temp_df[temp_df["sentiment"] == selected_sentiment]
-
-        # Apply coloring to the sentiment column for better visibility
+        # Sentiment Color Styling
         def color_sentiment(val):
             if val == 'Positive': color = '#2ecc71'
             elif val == 'Negative': color = '#e74c3c'
             else: color = '#3498db'
             return f'background-color: {color}; color: white; font-weight: bold'
 
-        st.dataframe(
-    temp_df[["author", "comment", "language", "sentiment", "confidence", "published_at"]].style.map(
-        color_sentiment, subset=['sentiment']
-    ),
-    use_container_width=True
-)
+        # Filter option
+        filter_choice = st.selectbox("Filter by Sentiment", ["All", "Positive", "Neutral", "Negative"])
+        display_df = df.copy()
+        if filter_choice != "All":
+            display_df = display_df[display_df["sentiment"] == filter_choice]
 
-    with tab3:
-        st.dataframe(df, use_container_width=True)
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Download Results as CSV",
-            csv,
-            "youtube_sentiment_analysis.csv",
-            "text/csv",
+        st.dataframe(
+            display_df[["author", "comment", "language", "sentiment", "confidence"]].style.map(
+                color_sentiment, subset=['sentiment']
+            ), 
             use_container_width=True
         )
+
+    with tab3:
+        st.subheader("Download Research Results")
+        st.write("The CSV file includes original comments, detected languages, sentiment labels, and AI confidence scores.")
+        
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download CSV File",
+            data=csv,
+            file_name=f"youtube_analysis_{video_id}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+        st.write("### Data Preview")
+        st.dataframe(df.head(10))

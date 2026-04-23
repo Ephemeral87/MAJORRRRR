@@ -154,11 +154,11 @@ if run:
             return f'background-color: {color}; color: white; font-weight: bold'
 
         st.dataframe(
-            temp_df[["author", "comment", "language", "sentiment", "confidence", "published_at"]].style.applymap(
-                color_sentiment, subset=['sentiment']
-            ),
-            use_container_width=True
-        )
+    temp_df[["author", "comment", "language", "sentiment", "confidence", "published_at"]].style.map(
+        color_sentiment, subset=['sentiment']
+    ),
+    use_container_width=True
+)
 
     with tab3:
         st.dataframe(df, use_container_width=True)
